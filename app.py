@@ -78,7 +78,7 @@ class LoadBalancer (object):
                 return
 
 @poxutil.eval_args
-def launch (foo, bar = False):
+def launch():
     def start_switch(event):
         log.info("Starting Load Balancer on %s", event.connection)
         LoadBalancer(event.connection)
