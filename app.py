@@ -1,10 +1,16 @@
-from pox.core import core
-import pox.openflow.libopenflow_01 as of
-from pox.lib.packet.ethernet import ethernet, ETHER_BROADCAST
+# Import some POX stuff
+from pox.core import core                     # Main POX object
+import pox.openflow.libopenflow_01 as of      # OpenFlow 1.0 library
+import pox.lib.packet as pkt                  # Packet parsing/construction
+from pox.lib.addresses import EthAddr, IPAddr # Address types
+import pox.lib.util as poxutil                # Various util functions
+import pox.lib.revent as revent               # Event library
+import pox.lib.recoco as recoco               # Multitasking library
+from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.arp import arp
-from pox.lib.packet.ipv4 import ipv4
 from pox.lib.addresses import IPAddr, EthAddr
 
+# Create a logger for this component
 log = core.getLogger()
 
 VIRTUAL_IP = IPAddr("10.0.0.10")
@@ -71,7 +77,8 @@ class LoadBalancer (object):
                 self.connection.send(msg)
                 return
 
-def launch():
+@poxutil.eval_args
+def launch (foo, bar = False):
     def start_switch(event):
         log.info("Starting Load Balancer on %s", event.connection)
         LoadBalancer(event.connection)
