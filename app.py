@@ -14,6 +14,7 @@ from pox.lib.addresses import IPAddr, EthAddr
 log = core.getLogger()
 
 VIRTUAL_IP = IPAddr("10.0.0.10")
+VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")
 SERVERS = [(IPAddr("10.0.0.5"), EthAddr("00:00:00:00:00:05")),
            (IPAddr("10.0.0.6"), EthAddr("00:00:00:00:00:06"))]
 server_index = 0
@@ -45,15 +46,19 @@ class LoadBalancer (object):
                 # Create ARP reply
                 arp_reply = arp()
                 arp_reply.opcode = arp.REPLY
+                arp_reply.hwtype = payload.hwtype
+                arp_reply.prototype = payload.prototype
+                arp_reply.hwlen = payload.hwlen
+                arp_reply.protolen = payload.protolen
                 arp_reply.protosrc = VIRTUAL_IP
                 arp_reply.protodst = payload.protosrc
-                arp_reply.hwsrc = server_mac
+                arp_reply.hwsrc = VIRTUAL_MAC
                 arp_reply.hwdst = payload.hwsrc
                 
                 # Create Ethernet reply
                 eth_reply = ethernet()
                 eth_reply.type = ethernet.ARP_TYPE
-                eth_reply.src = server_mac
+                eth_reply.src = VIRTUAL_MAC
                 eth_reply.dst = payload.hwsrc
                 eth_reply.payload = arp_reply
                 
