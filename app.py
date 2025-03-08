@@ -30,10 +30,14 @@ class LoadBalancer (object):
         in_port = event.port
 
         payload = packet.payload
+
+        log.debug(f"Received packet: type={packet.type}, in_port={in_port}")
         
         # Check if the packet is an ARP and if it is for the virtual IP
         if packet.type == ethernet.ARP_TYPE:
             if payload.opcode == arp.REQUEST and payload.protodst == VIRTUAL_IP:
+                log.info(f"Handling ARP request for virtual IP {VIRTUAL_IP}")
+                
                 # Round-robin selection
                 server_ip, server_mac = SERVERS[server_index]
                 server_index = (server_index + 1) % len(SERVERS)
@@ -58,11 +62,15 @@ class LoadBalancer (object):
                 msg.data = eth_reply.pack()
                 msg.actions.append(of.ofp_action_output(port=in_port))
                 self.connection.send(msg)
+
+                log.debug(f"Sent ARP reply: server_ip={server_ip}, server_mac={server_mac}")
                 return
         
         # Check if the packet is an IP and if it is for the virtual IP
         elif packet.type == ethernet.IP_TYPE:
             if payload.dstip == VIRTUAL_IP:
+                log.info(f"Handling IP packet for virtual IP {VIRTUAL_IP}")
+
                 # Round-robin selection
                 server_ip, server_mac = SERVERS[server_index]
                 server_index = (server_index + 1) % len(SERVERS)
@@ -75,7 +83,11 @@ class LoadBalancer (object):
                 msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
                 msg.actions.append(of.ofp_action_output(port=event.port))
                 self.connection.send(msg)
+
+                log.debug(f"Installed flow rule: server_ip={server_ip}, server_mac={server_mac}")
                 return
+            
+        log.debug("Packet not handled by load balancer")
 
 @poxutil.eval_args
 def launch():
