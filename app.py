@@ -25,6 +25,7 @@ class LoadBalancer (object):
 
         payload = packet.payload
         
+        # Check if the packet is an ARP and if it is for the virtual IP
         if packet.type == ethernet.ARP_TYPE:
             if payload.opcode == arp.REQUEST and payload.protodst == VIRTUAL_IP:
                 # Round-robin selection
@@ -39,20 +40,24 @@ class LoadBalancer (object):
                 arp_reply.hwsrc = server_mac
                 arp_reply.hwdst = payload.hwsrc
                 
+                # Create Ethernet reply
                 eth_reply = ethernet()
                 eth_reply.type = ethernet.ARP_TYPE
                 eth_reply.src = server_mac
                 eth_reply.dst = payload.hwsrc
                 eth_reply.payload = arp_reply
                 
+                # Send
                 msg = of.ofp_packet_out()
                 msg.data = eth_reply.pack()
                 msg.actions.append(of.ofp_action_output(port=in_port))
                 self.connection.send(msg)
                 return
         
+        # Check if the packet is an IP and if it is for the virtual IP
         elif packet.type == ethernet.IP_TYPE:
             if payload.dstip == VIRTUAL_IP:
+                # Round-robin selection
                 server_ip, server_mac = SERVERS[server_index]
                 server_index = (server_index + 1) % len(SERVERS)
                 
