@@ -68,7 +68,7 @@ class LoadBalancer (object):
                 msg.actions.append(of.ofp_action_output(port=in_port))
                 self.connection.send(msg)
 
-                log.debug(f"Sent ARP reply: server_ip={server_ip}, server_mac={server_mac}")
+                log.info(f"Sent ARP reply: server_ip={server_ip}, server_mac={server_mac}")
                 return
         
         # Check if the packet is an IP and if it is for the virtual IP
@@ -89,10 +89,10 @@ class LoadBalancer (object):
                 msg.actions.append(of.ofp_action_output(port=event.port))
                 self.connection.send(msg)
 
-                log.debug(f"Installed flow rule: server_ip={server_ip}, server_mac={server_mac}")
+                log.info(f"Installed flow rule: server_ip={server_ip}, server_mac={server_mac}")
                 return
             
-        log.debug("Packet not handled by load balancer")
+        log.info("Packet not handled by load balancer")
 
 @poxutil.eval_args
 def launch():
