@@ -23,35 +23,34 @@ server_index = 0
 class LoadBalancer (object):
     def __init__(self, connection):
         self.connection = connection
+        self.mac_to_port = {}  # MAC address to port mapping
         connection.addListeners(self)
         log.info("Load Balancer Initialized")
-    
+
     def _handle_PacketIn(self, event):
-        global server_index
         packet = event.parsed
         in_port = event.port
 
-        payload = packet.payload
+        self.mac_to_port[packet.src] = in_port
 
-        log.debug(f"Received packet: type={packet.type}, in_port={in_port}")
-        
-        # Check if the packet is an ARP and if it is for the virtual IP
+        log.debug(f"PacketIn: src={packet.src}, dst={packet.dst}, type={packet.type}, in_port={in_port}")
+
         if packet.type == ethernet.ARP_TYPE:
-            if payload.opcode == arp.REQUEST and payload.protodst == VIRTUAL_IP:
-                log.info(f"Handling ARP request for virtual IP {VIRTUAL_IP}")
-                self._handle_arp_request(event, payload)
-                return
-        
-        # Check if the packet is an IP and if it is for the virtual IP
+            self._handle_arp(event)
         elif packet.type == ethernet.IP_TYPE:
-            if payload.dstip == VIRTUAL_IP:
-                log.info(f"Handling IP packet for virtual IP {VIRTUAL_IP}")
-                self._handle_ip_packet(event, payload)
-                return
-            
-        log.info("Packet not handled by load balancer")
+            self._handle_ip(event)
+        else:
+            log.debug("Packet not handled by load balancer")
 
-    def _handle_arp_request(self, event, arp_request):
+    def _handle_arp(self, event):
+        packet = event.parsed
+        arp_packet = packet.payload
+
+        if arp_packet.opcode == arp.REQUEST and arp_packet.protodst == VIRTUAL_IP:
+            log.info(f"Handling ARP request for virtual IP {VIRTUAL_IP}")
+            self._send_arp_reply(event, arp_packet)
+
+    def _send_arp_reply(self, event, arp_request):
         arp_reply = arp()
         arp_reply.opcode = arp.REPLY
         arp_reply.hwsrc = VIRTUAL_MAC
@@ -72,7 +71,18 @@ class LoadBalancer (object):
 
         log.info(f"Sent ARP reply: {VIRTUAL_IP} is-at {VIRTUAL_MAC}")
 
-    def _handle_ip_packet(self, event, ip_packet):
+    def _handle_ip(self, event):
+        packet = event.parsed
+        ip_packet = packet.payload
+
+        if ip_packet.dstip == VIRTUAL_IP:
+            log.info(f"Handling IP packet for virtual IP {VIRTUAL_IP}")
+            self._load_balance(event, ip_packet)
+        elif ip_packet.srcip in [server[0] for server in SERVERS]:
+            log.info(f"Handling return traffic from server {ip_packet.srcip}")
+            self._handle_server_return_traffic(event, ip_packet)
+
+    def _load_balance(self, event, ip_packet):
         global server_index
         server_ip, server_mac = SERVERS[server_index]
         server_index = (server_index + 1) % len(SERVERS)
@@ -81,41 +91,53 @@ class LoadBalancer (object):
         client_ip = ip_packet.srcip
 
         # Install flow rule for client to server
-        flow_mod = of.ofp_flow_mod()
-        flow_mod.match.dl_type = ethernet.IP_TYPE
-        flow_mod.match.nw_dst = VIRTUAL_IP
-        flow_mod.match.nw_src = client_ip
-        flow_mod.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-        flow_mod.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        flow_mod.actions.append(of.ofp_action_output(port=self._get_port_for_mac(server_mac)))
-        self.connection.send(flow_mod)
+        self._install_flow_rule(client_ip, VIRTUAL_IP, server_ip, server_mac, event.port)
 
         # Install flow rule for server to client
-        flow_mod = of.ofp_flow_mod()
-        flow_mod.match.dl_type = ethernet.IP_TYPE
-        flow_mod.match.nw_src = server_ip
-        flow_mod.match.nw_dst = client_ip
-        flow_mod.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
-        flow_mod.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
-        flow_mod.actions.append(of.ofp_action_output(port=event.port))
-        self.connection.send(flow_mod)
+        self._install_flow_rule(server_ip, client_ip, VIRTUAL_IP, VIRTUAL_MAC, self.mac_to_port[server_mac])
 
         log.info(f"Installed flow rules: {client_ip} <-> {VIRTUAL_IP} (actual: {server_ip})")
 
         # Forward the current packet
+        self._send_packet(event, server_mac, server_ip)
+
+    def _install_flow_rule(self, src_ip, dst_ip, new_dst_ip, new_dst_mac, out_port):
+        flow_mod = of.ofp_flow_mod()
+        flow_mod.match.dl_type = ethernet.IP_TYPE
+        flow_mod.match.nw_src = src_ip
+        flow_mod.match.nw_dst = dst_ip
+        flow_mod.actions.append(of.ofp_action_dl_addr.set_dst(new_dst_mac))
+        flow_mod.actions.append(of.ofp_action_nw_addr.set_dst(new_dst_ip))
+        flow_mod.actions.append(of.ofp_action_output(port=out_port))
+        self.connection.send(flow_mod)
+
+    def _send_packet(self, event, dst_mac, dst_ip):
         msg = of.ofp_packet_out()
         msg.data = event.ofp
-        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_output(port=self._get_port_for_mac(server_mac)))
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(dst_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(dst_ip))
+        msg.actions.append(of.ofp_action_output(port=self.mac_to_port[dst_mac]))
         self.connection.send(msg)
 
-    def _get_port_for_mac(self, mac):
-        # This is a simplified version. In a real scenario, you'd maintain a MAC-to-port mapping.
-        for i, (_, server_mac) in enumerate(SERVERS):
-            if server_mac == mac:
-                return i + 1  # Assuming server ports start from 1
-        return of.OFPP_FLOOD  # If not found, flood the packet
+    def _handle_server_return_traffic(self, event, ip_packet):
+        client_ip = ip_packet.dstip
+        client_mac = None
+        for mac, port in self.mac_to_port.items():
+            if port == event.port:
+                client_mac = mac
+                break
+
+        if client_mac:
+            # Modify packet to appear as if it's coming from the virtual IP
+            msg = of.ofp_packet_out()
+            msg.data = event.ofp
+            msg.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
+            msg.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+            msg.actions.append(of.ofp_action_output(port=self.mac_to_port[client_mac]))
+            self.connection.send(msg)
+            log.info(f"Forwarded return traffic to client {client_ip}")
+        else:
+            log.warning(f"Unable to find client MAC for IP {client_ip}")
 
 @poxutil.eval_args
 def launch():
