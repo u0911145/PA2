@@ -74,7 +74,17 @@ class LoadBalancer (object):
                 msg.actions.append(of.ofp_action_output(port=in_port))
                 self.connection.send(msg)
 
-                log.info(f"Sent ARP reply: server_ip={server_ip}, server_mac={server_mac}")
+                log.info(f"Sent ARP reply: virtual_ip={VIRTUAL_IP}, virtual_mac={VIRTUAL_MAC}")
+                log.info(f"ARP reply details: src={eth_reply.src}, dst={eth_reply.dst}, "
+                        f"hwsrc={arp_reply.hwsrc}, hwdst={arp_reply.hwdst}, "
+                        f"protosrc={arp_reply.protosrc}, protodst={arp_reply.protodst}")
+                
+                # Install a flow rule to handle future ARP requests
+                flow_mod = of.ofp_flow_mod()
+                flow_mod.match.dl_type = ethernet.ARP_TYPE
+                flow_mod.match.nw_dst = VIRTUAL_IP
+                flow_mod.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+                self.connection.send(flow_mod)
                 return
         
         # Check if the packet is an IP and if it is for the virtual IP
@@ -98,6 +108,14 @@ class LoadBalancer (object):
                 self.connection.send(msg)
 
                 log.info(f"Installed flow rule: server_ip={server_ip}, server_mac={server_mac}")
+
+                # Forward the current packet
+                msg = of.ofp_packet_out()
+                msg.data = event.ofp
+                msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+                msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+                msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
+                self.connection.send(msg)
                 return
             
         log.info("Packet not handled by load balancer")
