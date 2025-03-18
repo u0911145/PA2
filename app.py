@@ -42,6 +42,8 @@ class LoadBalancer (object):
                 # Round-robin selection
                 server_ip, server_mac = SERVERS[server_index]
                 server_index = (server_index + 1) % len(SERVERS)
+
+                log.info(f"Selected server: server_ip={server_ip}, server_mac={server_mac}")
                 
                 # Create ARP reply
                 arp_reply = arp()
@@ -54,6 +56,8 @@ class LoadBalancer (object):
                 arp_reply.protodst = payload.protosrc
                 arp_reply.hwsrc = VIRTUAL_MAC
                 arp_reply.hwdst = payload.hwsrc
+
+                log.info(f"Created ARP reply: server_ip={server_ip}, server_mac={server_mac}")
                 
                 # Create Ethernet reply
                 eth_reply = ethernet()
@@ -61,6 +65,8 @@ class LoadBalancer (object):
                 eth_reply.src = VIRTUAL_MAC
                 eth_reply.dst = payload.hwsrc
                 eth_reply.payload = arp_reply
+
+                log.info(f"Created Ethernet reply: server_ip={server_ip}, server_mac={server_mac}")
                 
                 # Send
                 msg = of.ofp_packet_out()
@@ -79,6 +85,8 @@ class LoadBalancer (object):
                 # Round-robin selection
                 server_ip, server_mac = SERVERS[server_index]
                 server_index = (server_index + 1) % len(SERVERS)
+
+                log.info(f"Selected server: server_ip={server_ip}, server_mac={server_mac}")
                 
                 # Install OpenFlow rules
                 msg = of.ofp_flow_mod()
