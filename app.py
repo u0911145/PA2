@@ -8,6 +8,7 @@ import pox.lib.revent as revent               # Event library
 import pox.lib.recoco as recoco               # Multitasking library
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.arp import arp
+from pox.lib.packet.ipv4 import ipv4
 from pox.lib.addresses import IPAddr, EthAddr
 
 # Create a logger for this component
@@ -38,87 +39,83 @@ class LoadBalancer (object):
         if packet.type == ethernet.ARP_TYPE:
             if payload.opcode == arp.REQUEST and payload.protodst == VIRTUAL_IP:
                 log.info(f"Handling ARP request for virtual IP {VIRTUAL_IP}")
-                
-                # Round-robin selection
-                server_ip, server_mac = SERVERS[server_index]
-                server_index = (server_index + 1) % len(SERVERS)
-
-                log.info(f"Selected server: server_ip={server_ip}, server_mac={server_mac}")
-                
-                # Create ARP reply
-                arp_reply = arp()
-                arp_reply.opcode = arp.REPLY
-                arp_reply.hwtype = payload.hwtype
-                arp_reply.prototype = payload.prototype
-                arp_reply.hwlen = payload.hwlen
-                arp_reply.protolen = payload.protolen
-                arp_reply.protosrc = VIRTUAL_IP
-                arp_reply.protodst = payload.protosrc
-                arp_reply.hwsrc = VIRTUAL_MAC
-                arp_reply.hwdst = payload.hwsrc
-
-                log.info(f"Created ARP reply: server_ip={server_ip}, server_mac={server_mac}")
-                
-                # Create Ethernet reply
-                eth_reply = ethernet()
-                eth_reply.type = ethernet.ARP_TYPE
-                eth_reply.src = VIRTUAL_MAC
-                eth_reply.dst = payload.hwsrc
-                eth_reply.payload = arp_reply
-
-                log.info(f"Created Ethernet reply: server_ip={server_ip}, server_mac={server_mac}")
-                
-                # Send
-                msg = of.ofp_packet_out()
-                msg.data = eth_reply.pack()
-                msg.actions.append(of.ofp_action_output(port=in_port))
-                self.connection.send(msg)
-
-                log.info(f"Sent ARP reply: virtual_ip={VIRTUAL_IP}, virtual_mac={VIRTUAL_MAC}")
-                log.info(f"ARP reply details: src={eth_reply.src}, dst={eth_reply.dst}, "
-                        f"hwsrc={arp_reply.hwsrc}, hwdst={arp_reply.hwdst}, "
-                        f"protosrc={arp_reply.protosrc}, protodst={arp_reply.protodst}")
-                
-                # Install a flow rule to handle future ARP requests
-                flow_mod = of.ofp_flow_mod()
-                flow_mod.match.dl_type = ethernet.ARP_TYPE
-                flow_mod.match.nw_dst = VIRTUAL_IP
-                flow_mod.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
-                self.connection.send(flow_mod)
+                self._handle_arp_request(event, payload)
                 return
         
         # Check if the packet is an IP and if it is for the virtual IP
         elif packet.type == ethernet.IP_TYPE:
             if payload.dstip == VIRTUAL_IP:
                 log.info(f"Handling IP packet for virtual IP {VIRTUAL_IP}")
-
-                # Round-robin selection
-                server_ip, server_mac = SERVERS[server_index]
-                server_index = (server_index + 1) % len(SERVERS)
-
-                log.info(f"Selected server: server_ip={server_ip}, server_mac={server_mac}")
-                
-                # Install OpenFlow rules
-                msg = of.ofp_flow_mod()
-                msg.match.dl_type = ethernet.IP_TYPE
-                msg.match.nw_dst = VIRTUAL_IP
-                msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-                msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-                msg.actions.append(of.ofp_action_output(port=event.port))
-                self.connection.send(msg)
-
-                log.info(f"Installed flow rule: server_ip={server_ip}, server_mac={server_mac}")
-
-                # Forward the current packet
-                msg = of.ofp_packet_out()
-                msg.data = event.ofp
-                msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
-                msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-                msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
-                self.connection.send(msg)
+                self._handle_ip_packet(event, payload)
                 return
             
         log.info("Packet not handled by load balancer")
+
+    def _handle_arp_request(self, event, arp_request):
+        arp_reply = arp()
+        arp_reply.opcode = arp.REPLY
+        arp_reply.hwsrc = VIRTUAL_MAC
+        arp_reply.hwdst = arp_request.hwsrc
+        arp_reply.protosrc = VIRTUAL_IP
+        arp_reply.protodst = arp_request.protosrc
+
+        eth_reply = ethernet()
+        eth_reply.type = ethernet.ARP_TYPE
+        eth_reply.src = VIRTUAL_MAC
+        eth_reply.dst = arp_request.hwsrc
+        eth_reply.payload = arp_reply
+
+        msg = of.ofp_packet_out()
+        msg.data = eth_reply.pack()
+        msg.actions.append(of.ofp_action_output(port=event.port))
+        self.connection.send(msg)
+
+        log.info(f"Sent ARP reply: {VIRTUAL_IP} is-at {VIRTUAL_MAC}")
+
+    def _handle_ip_packet(self, event, ip_packet):
+        global server_index
+        server_ip, server_mac = SERVERS[server_index]
+        server_index = (server_index + 1) % len(SERVERS)
+
+        client_mac = event.parsed.src
+        client_ip = ip_packet.srcip
+
+        # Install flow rule for client to server
+        flow_mod = of.ofp_flow_mod()
+        flow_mod.match.dl_type = ethernet.IP_TYPE
+        flow_mod.match.nw_dst = VIRTUAL_IP
+        flow_mod.match.nw_src = client_ip
+        flow_mod.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        flow_mod.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        flow_mod.actions.append(of.ofp_action_output(port=self._get_port_for_mac(server_mac)))
+        self.connection.send(flow_mod)
+
+        # Install flow rule for server to client
+        flow_mod = of.ofp_flow_mod()
+        flow_mod.match.dl_type = ethernet.IP_TYPE
+        flow_mod.match.nw_src = server_ip
+        flow_mod.match.nw_dst = client_ip
+        flow_mod.actions.append(of.ofp_action_dl_addr.set_src(VIRTUAL_MAC))
+        flow_mod.actions.append(of.ofp_action_nw_addr.set_src(VIRTUAL_IP))
+        flow_mod.actions.append(of.ofp_action_output(port=event.port))
+        self.connection.send(flow_mod)
+
+        log.info(f"Installed flow rules: {client_ip} <-> {VIRTUAL_IP} (actual: {server_ip})")
+
+        # Forward the current packet
+        msg = of.ofp_packet_out()
+        msg.data = event.ofp
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=self._get_port_for_mac(server_mac)))
+        self.connection.send(msg)
+
+    def _get_port_for_mac(self, mac):
+        # This is a simplified version. In a real scenario, you'd maintain a MAC-to-port mapping.
+        for i, (_, server_mac) in enumerate(SERVERS):
+            if server_mac == mac:
+                return i + 1  # Assuming server ports start from 1
+        return of.OFPP_FLOOD  # If not found, flood the packet
 
 @poxutil.eval_args
 def launch():
