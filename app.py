@@ -6,91 +6,101 @@ from pox.lib.addresses import EthAddr, IPAddr # Address types
 import pox.lib.util as poxutil                # Various util functions
 import pox.lib.revent as revent               # Event library
 import pox.lib.recoco as recoco               # Multitasking library
-from pox.lib.packet.ethernet import ethernet
-from pox.lib.packet.arp import arp
-from pox.lib.packet.ipv4 import ipv4
-from pox.lib.addresses import IPAddr, EthAddr
 
 # Create a logger for this component
 log = core.getLogger()
 
-VIRTUAL_IP = IPAddr("10.0.0.10")
-VIRTUAL_MAC = EthAddr("00:00:00:00:00:10")
+switch_ip = IPAddr("10.0.0.10")
+switch_mac = EthAddr("00:00:00:00:00:10")
 
-SERVER_IP = IPAddr("10.0.0.5")
-SERVER_MAC = EthAddr("00:00:00:00:00:05")
+servers = [("10.0.0.5", EthAddr("00:00:00:00:00:05")),
+           ("10.0.0.6", EthAddr("00:00:00:00:00:06"))]
+
+server_index = 0
 
 class LoadBalancer (object):
     def __init__(self, connection):
-        self.connection = connection
-        connection.addListeners(self)
-        log.info("Simple Load Balancer Initialized")
+        core.openflow.addListeners(self)
+
+    def _handle_ConnectionUp(self, event):
+        pass
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
-        in_port = event.port
 
-        log.debug(f"PacketIn: src={packet.src}, dst={packet.dst}, type={packet.type}, in_port={in_port}")
+        if packet.type == packet.ARP_TYPE:
+            self.handle_arp(packet, event)
 
-        if packet.type == ethernet.ARP_TYPE:
-            self._handle_arp(event)
-        elif packet.type == ethernet.IP_TYPE:
-            self._handle_ip(event)
+        log.info("Received packet: %s", packet)
 
-    def _handle_arp(self, event):
-        arp_packet = event.parsed.payload
+    def handle_arp(self, packet, event):
+        arp_packet = packet.payload
+        global rr_index
 
-        if arp_packet.opcode == arp.REQUEST and arp_packet.protodst == VIRTUAL_IP:
-            log.info(f"Handling ARP request for virtual IP {VIRTUAL_IP}")
-            
+        if arp_packet.opcode == arp_packet.REQUEST and arp_packet.protodst == switch_ip:
+            log.info("Received ARP request for virtual IP")
+            # ARP request for the virtual IP
+            # Respond with the MAC address of the next server
+            chosen_server_ip, chosen_server_mac = servers[rr_index]
+            rr_index = (rr_index + 1) % len(servers)
+
+            # Create ARP reply
             arp_reply = arp()
-            arp_reply.opcode = arp.REPLY
-            arp_reply.hwsrc = VIRTUAL_MAC
+            arp_reply.hwsrc = switch_mac
             arp_reply.hwdst = arp_packet.hwsrc
-            arp_reply.protosrc = VIRTUAL_IP
+            arp_reply.opcode = arp.REPLY
+            arp_reply.protosrc = switch_ip
             arp_reply.protodst = arp_packet.protosrc
+            eth = ethernet(type=packet.ARP_TYPE, src=switch_mac, dst=arp_packet.hwsrc)
+            eth.set_payload(arp_reply)
 
-            eth_reply = ethernet()
-            eth_reply.type = ethernet.ARP_TYPE
-            eth_reply.src = VIRTUAL_MAC
-            eth_reply.dst = arp_packet.hwsrc
-            eth_reply.payload = arp_reply
+            log.info("Sending ARP reply for virtual IP")
 
+            # Send ARP reply
             msg = of.ofp_packet_out()
-            msg.data = eth_reply.pack()
-            msg.actions.append(of.ofp_action_output(port=event.port))
-            self.connection.send(msg)
+            msg.data = eth.pack()
+            msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+            msg.in_port = event.port
+            event.connection.send(msg)
 
-            log.info(f"Sent ARP reply: {VIRTUAL_IP} is-at {VIRTUAL_MAC}")
+            log.info("Installed flow for virtual IP")
 
-    def _handle_ip(self, event):
-        ip_packet = event.parsed.payload
+            # Install flow rules for this server
+            self.install_flow(event, chosen_server_ip, chosen_server_mac, event.port)
 
-        if ip_packet.dstip == VIRTUAL_IP:
-            log.info(f"Handling IP packet for virtual IP {VIRTUAL_IP}")
+    def install_flow(self, event, server_ip, server_mac, client_port):
+        log.info("Installing flow for server IP %s", server_ip)
 
-            # Install flow rule
-            flow_mod = of.ofp_flow_mod()
-            flow_mod.match.dl_type = ethernet.IP_TYPE
-            flow_mod.match.nw_dst = VIRTUAL_IP
-            flow_mod.actions.append(of.ofp_action_dl_addr.set_dst(SERVER_MAC))
-            flow_mod.actions.append(of.ofp_action_nw_addr.set_dst(SERVER_IP))
-            flow_mod.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
-            self.connection.send(flow_mod)
+        # Rule for traffic from client to server
+        msg = of.ofp_flow_mod()
+        msg.match = of.ofp_match()
+        msg.match.dl_type = 0x0800  # IP traffic
+        msg.match.nw_proto = 1  # ICMP protocol
+        msg.match.nw_dst = switch_ip  # Virtual IP
+        msg.match.in_port = client_port
+        msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
+        event.connection.send(msg)
 
-            # Forward the current packet
-            msg = of.ofp_packet_out()
-            msg.data = event.ofp
-            msg.actions.append(of.ofp_action_dl_addr.set_dst(SERVER_MAC))
-            msg.actions.append(of.ofp_action_nw_addr.set_dst(SERVER_IP))
-            msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
-            self.connection.send(msg)
+        log.info("Installing flow for server IP %s", server_ip)
 
-            log.info(f"Forwarded packet and installed flow rule: {ip_packet.srcip} -> {VIRTUAL_IP} (actual: {SERVER_IP})")
+        # Rule for traffic from server to client (assuming server port is known)
+        server_port = self.get_server_port(server_ip)  # A function to get the server's port; you'd need to implement this
+        msg = of.ofp_flow_mod()
+        msg.match = of.ofp_match()
+        msg.match.dl_type = 0x0800  # IP traffic
+        msg.match.nw_proto = 1  # ICMP protocol
+        msg.match.nw_src = server_ip  # Server IP
+        msg.match.in_port = server_port
+        msg.actions.append(of.ofp_action_dl_addr.set_src(switch_mac))
+        msg.actions.append(of.ofp_action_nw_addr.set_src(switch_ip))
+        msg.actions.append(of.ofp_action_output(port=client_port))
+        event.connection.send(msg)
+
+        log.info("Flow installed for server IP %s", server_ip)
+        pass
 
 @poxutil.eval_args
 def launch():
-    def start_switch(event):
-        log.info("Starting Load Balancer on %s", event.connection)
-        LoadBalancer(event.connection)
-    core.openflow.addListenerByName("ConnectionUp", start_switch)
+    core.registerNew(LoadBalancer)
