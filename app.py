@@ -46,10 +46,10 @@ class LoadBalancer (object):
 
             # Create ARP reply
             arp_reply = pkt.arp()
-            arp_reply.hwsrc = switch_mac
+            arp_reply.hwsrc = chosen_server_mac
             arp_reply.hwdst = arp_packet.hwsrc
             arp_reply.opcode = pkt.arp.REPLY
-            arp_reply.protosrc = switch_ip
+            arp_reply.protosrc = chosen_server_mac
             arp_reply.protodst = arp_packet.protosrc
             eth = pkt.ethernet(type=packet.ARP_TYPE, src=switch_mac, dst=arp_packet.hwsrc)
             eth.set_payload(arp_reply)
