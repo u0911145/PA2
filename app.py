@@ -66,21 +66,20 @@ class LoadBalancer (object):
             log.info("Installed flow for virtual IP")
 
             # Install flow rules for this server
-            self.install_flow(event, chosen_server_ip, chosen_server_mac, event.port)
+            self.install_flow(event, chosen_server_ip, chosen_server_mac, arp_packet.protosrc, event.port)
 
-    def install_flow(self, event, server_ip, server_mac, client_port):
+    def install_flow(self, event, server_ip, server_mac, client_ip, client_port):
         log.info("Installing flow for server IP %s", server_ip)
 
         # Rule for traffic from client to server
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match()
-        msg.match.dl_type = 0x0800  # IP traffic
-        msg.match.nw_proto = 1  # ICMP protocol
-        msg.match.nw_dst = switch_ip  # Virtual IP
         msg.match.in_port = client_port
+        msg.match.nw_dst = server_ip
+        # actions
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
         event.connection.send(msg)
 
         log.info("Installing flow for server IP %s", server_ip)
@@ -89,10 +88,10 @@ class LoadBalancer (object):
         server_port = of.OFPP_IN_PORT
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match()
-        msg.match.dl_type = 0x0800  # IP traffic
-        msg.match.nw_proto = 1  # ICMP protocol
-        msg.match.nw_src = server_ip  # Server IP
         msg.match.in_port = server_port
+        msg.match.nw_src = server_ip
+        msg.match.nw_dst = client_ip
+        # actions
         msg.actions.append(of.ofp_action_dl_addr.set_src(switch_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_src(switch_ip))
         msg.actions.append(of.ofp_action_output(port=client_port))
