@@ -66,9 +66,9 @@ class LoadBalancer (object):
             log.info("Installed flow for virtual IP")
 
             # Install flow rules for this server
-            self.install_flow(event, chosen_server_ip, chosen_server_mac, arp_packet.protosrc, event.port)
+            self.install_flow(event, chosen_server_ip, chosen_server_mac, event.port, arp_packet.protosrc, event.port)
 
-    def install_flow(self, event, server_ip, server_mac, client_ip, client_port):
+    def install_flow(self, event, server_ip, server_mac, server_port, client_ip, client_port):
         log.info("Installing flow: %s -> %s", client_ip, server_ip)
 
         # Rule for traffic from client to server
@@ -80,13 +80,12 @@ class LoadBalancer (object):
         # actions
         msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
-        msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
+        msg.actions.append(of.ofp_action_output(port=server_port))
         event.connection.send(msg)
 
         log.info("Installing flow: %s -> %s", server_ip, client_ip)
 
         # Rule for traffic from server to client (assuming server port is known)
-        server_port = of.OFPP_IN_PORT
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match()
         msg.match.dl_type = pkt.ethernet.IP_TYPE
