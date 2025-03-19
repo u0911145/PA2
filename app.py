@@ -19,7 +19,7 @@ servers = [("10.0.0.5", EthAddr("00:00:00:00:00:05")),
 server_index = 0
 
 class LoadBalancer (object):
-    def __init__(self, connection):
+    def __init__(self):
         core.openflow.addListeners(self)
 
     def _handle_ConnectionUp(self, event):
