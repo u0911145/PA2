@@ -69,11 +69,12 @@ class LoadBalancer (object):
             self.install_flow(event, chosen_server_ip, chosen_server_mac, arp_packet.protosrc, event.port)
 
     def install_flow(self, event, server_ip, server_mac, client_ip, client_port):
-        log.info("Installing flow for server IP %s", server_ip)
+        log.info("Installing flow: %s -> %s", client_ip, server_ip)
 
         # Rule for traffic from client to server
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match()
+        msg.match.dl_type = pkt.ethernet.IP_TYPE
         msg.match.in_port = client_port
         msg.match.nw_dst = server_ip
         # actions
@@ -82,12 +83,13 @@ class LoadBalancer (object):
         msg.actions.append(of.ofp_action_output(port=of.OFPP_IN_PORT))
         event.connection.send(msg)
 
-        log.info("Installing flow for server IP %s", server_ip)
+        log.info("Installing flow: %s -> %s", server_ip, client_ip)
 
         # Rule for traffic from server to client (assuming server port is known)
         server_port = of.OFPP_IN_PORT
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match()
+        msg.match.dl_type = pkt.ethernet.IP_TYPE
         msg.match.in_port = server_port
         msg.match.nw_src = server_ip
         msg.match.nw_dst = client_ip
@@ -97,7 +99,7 @@ class LoadBalancer (object):
         msg.actions.append(of.ofp_action_output(port=client_port))
         event.connection.send(msg)
 
-        log.info("Flow installed for server IP %s", server_ip)
+        log.info("Flow installed")
         pass
 
 @poxutil.eval_args
