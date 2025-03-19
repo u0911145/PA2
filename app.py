@@ -86,7 +86,7 @@ class LoadBalancer (object):
         log.info("Installing flow for server IP %s", server_ip)
 
         # Rule for traffic from server to client (assuming server port is known)
-        server_port = self.get_server_port(server_ip)  # A function to get the server's port; you'd need to implement this
+        server_port = of.OFPP_IN_PORT
         msg = of.ofp_flow_mod()
         msg.match = of.ofp_match()
         msg.match.dl_type = 0x0800  # IP traffic
