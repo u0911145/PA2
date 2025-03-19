@@ -13,8 +13,8 @@ log = core.getLogger()
 switch_ip = IPAddr("10.0.0.10")
 switch_mac = EthAddr("00:00:00:00:00:10")
 
-servers = [("10.0.0.5", EthAddr("00:00:00:00:00:05")),
-           ("10.0.0.6", EthAddr("00:00:00:00:00:06"))]
+servers = [(IPAddr("10.0.0.5"), EthAddr("00:00:00:00:00:05")),
+           (IPAddr("10.0.0.6"), EthAddr("00:00:00:00:00:06"))]
 
 server_index = 0
 
