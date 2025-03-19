@@ -59,7 +59,7 @@ class LoadBalancer (object):
             # Send ARP reply
             msg = of.ofp_packet_out()
             msg.data = eth.pack()
-            msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+            msg.actions.append(of.ofp_action_output(port = event.port))
             msg.in_port = event.port
             event.connection.send(msg)
 
