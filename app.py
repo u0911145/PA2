@@ -35,14 +35,14 @@ class LoadBalancer (object):
 
     def handle_arp(self, packet, event):
         arp_packet = packet.payload
-        global rr_index
+        global server_index
 
         if arp_packet.opcode == arp_packet.REQUEST and arp_packet.protodst == switch_ip:
             log.info("Received ARP request for virtual IP")
             # ARP request for the virtual IP
             # Respond with the MAC address of the next server
-            chosen_server_ip, chosen_server_mac = servers[rr_index]
-            rr_index = (rr_index + 1) % len(servers)
+            chosen_server_ip, chosen_server_mac = servers[server_index]
+            server_index = (server_index + 1) % len(servers)
 
             # Create ARP reply
             arp_reply = arp()
