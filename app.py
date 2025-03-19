@@ -45,13 +45,13 @@ class LoadBalancer (object):
             server_index = (server_index + 1) % len(servers)
 
             # Create ARP reply
-            arp_reply = arp()
+            arp_reply = pkt.arp()
             arp_reply.hwsrc = switch_mac
             arp_reply.hwdst = arp_packet.hwsrc
-            arp_reply.opcode = arp.REPLY
+            arp_reply.opcode = pkt.arp.REPLY
             arp_reply.protosrc = switch_ip
             arp_reply.protodst = arp_packet.protosrc
-            eth = ethernet(type=packet.ARP_TYPE, src=switch_mac, dst=arp_packet.hwsrc)
+            eth = pkt.ethernet(type=packet.ARP_TYPE, src=switch_mac, dst=arp_packet.hwsrc)
             eth.set_payload(arp_reply)
 
             log.info("Sending ARP reply for virtual IP")
