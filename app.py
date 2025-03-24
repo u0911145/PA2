@@ -37,7 +37,7 @@ class LoadBalancer (object):
         arp_packet = packet.payload
         global server_index
 
-        if arp_packet.opcode == arp_packet.REQUEST and arp_packet.protodst == switch_ip:
+        if arp_packet.opcode == arp_packet.REQUEST:
             log.info("Received ARP request for virtual IP")
             # ARP request for the virtual IP
             # Respond with the MAC address of the next server
@@ -47,18 +47,22 @@ class LoadBalancer (object):
             # Create ARP reply
             arp_reply = pkt.arp()
             arp_reply.hwsrc = chosen_server_mac
-            arp_reply.hwdst = arp_packet.hwsrc
+            arp_reply.hwdst = arp_packet.src
             arp_reply.opcode = pkt.arp.REPLY
             arp_reply.protosrc = chosen_server_ip
             arp_reply.protodst = arp_packet.protosrc
-            eth = pkt.ethernet(type=packet.ARP_TYPE, src=switch_mac, dst=arp_packet.hwsrc)
-            eth.set_payload(arp_reply)
+
+            ether = pkt.ethernet()
+            ether.type = pkt.ethernet.ARP_TYPE
+            ether.dst = packet.src
+            ether.src = chosen_server_mac
+            ether.payload = arp_reply
 
             log.info("Sending ARP reply for virtual IP")
 
             # Send ARP reply
             msg = of.ofp_packet_out()
-            msg.data = eth.pack()
+            msg.data = ether.pack()
             msg.actions.append(of.ofp_action_output(port = event.port))
             msg.in_port = event.port
             event.connection.send(msg)
