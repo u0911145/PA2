@@ -54,10 +54,10 @@ class LoadBalancer (object):
                 if client_ip not in client_server_map:
                     client_server_map[client_ip] = servers[server_index]
                     server_index = (server_index + 1) % len(servers)
-                chosen_server_ip, chosen_server_mac, chosen_port = client_server_map[client_ip]
+                chosen_server_ip, chosen_server_mac = client_server_map[client_ip]
             else:
                 log.info(f"Received ARP request for client IP {requested_ip}")
-                chosen_server_ip, chosen_server_mac, chosen_port = requested_ip, switch_mac, event.port
+                chosen_server_ip, chosen_server_mac = requested_ip, switch_mac
             
             arp_reply = pkt.arp()
             arp_reply.hwsrc = chosen_server_mac
@@ -76,10 +76,10 @@ class LoadBalancer (object):
 
             msg = of.ofp_packet_out()
             msg.data = ether.pack()
-            msg.actions.append(of.ofp_action_output(port=event.port))
+            msg.actions.append(of.ofp_action_output(port=of.OFPP_ALL))
             event.connection.send(msg)
 
-            self.install_flow(event, chosen_server_ip, chosen_server_mac, chosen_port, client_ip, event.port)
+            self.install_flow(event, chosen_server_ip, chosen_server_mac, of.OFPP_ALL, client_ip, of.OFPP_ALL)
 
     def handle_ip(self, packet, event):
         global client_server_map
@@ -88,7 +88,7 @@ class LoadBalancer (object):
         client_ip = ip_packet.srcip
     
         if client_ip in client_server_map:
-            chosen_server_ip, chosen_server_mac, server_port = client_server_map[client_ip]
+            chosen_server_ip, chosen_server_mac = client_server_map[client_ip]
         else:
             chosen_server_ip, chosen_server_mac, server_port = servers[server_index]
             client_server_map[client_ip] = (chosen_server_ip, chosen_server_mac, server_port)
@@ -99,10 +99,10 @@ class LoadBalancer (object):
         msg.data = event.data
         msg.actions.append(of.ofp_action_dl_addr.set_dst(chosen_server_mac))
         msg.actions.append(of.ofp_action_nw_addr.set_dst(chosen_server_ip))
-        msg.actions.append(of.ofp_action_output(port=server_port))
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_ALL))
         event.connection.send(msg)
     
-        self.install_flow(event, chosen_server_ip, chosen_server_mac, server_port, client_ip, event.port)
+        self.install_flow(event, chosen_server_ip, chosen_server_mac, of.OFPP_ALL, client_ip, of.OFPP_ALL)
 
     def install_flow(self, event, server_ip, server_mac, server_port, client_ip, client_port):
         log.info(f"Installing forward flow: {client_ip} -> {server_ip} via port {server_port}")
