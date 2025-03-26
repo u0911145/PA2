@@ -41,6 +41,7 @@ class LoadBalancer (object):
             return
         
     def assign_client_server(self, client_key):
+        # Assign client to server, in round robin fashion
         global client_server_map
         global server_index
         client_server_map[client_key] = servers[server_index]
@@ -52,6 +53,7 @@ class LoadBalancer (object):
         arp_packet = packet.payload
 
         if arp_packet.opcode == pkt.arp.REQUEST:
+            # Get info
             requested_ip = arp_packet.protodst
             client_ip = arp_packet.protosrc
             client_mac = arp_packet.hwsrc
@@ -59,6 +61,7 @@ class LoadBalancer (object):
             chosen_server_ip = switch_ip
             chosen_server_mac = switch_mac
 
+            # Check if sent to switch
             if requested_ip == switch_ip:
                 log.info("Received ARP request for virtual IP")
                 chosen_server_ip, chosen_server_mac, chosen_port = self.assign_client_server((client_ip, client_mac))
@@ -98,12 +101,11 @@ class LoadBalancer (object):
                 log.info(f"Received ARP request for client IP {requested_ip}")
                 # Request is from server, get client ip and client map
                 for client_key in client_server_map:
-                    log.info(f"Client key: {client_key}, Requested IP: {requested_ip}")
                     if client_key[0] == requested_ip:
-                        log.info(f"Found client key: {client_key}")
                         chosen_server_ip, chosen_server_mac = client_key
                         break
             
+            # Create ARP reply
             arp_reply = pkt.arp()
             arp_reply.hwsrc = chosen_server_mac
             arp_reply.hwdst = arp_packet.hwsrc
@@ -111,6 +113,7 @@ class LoadBalancer (object):
             arp_reply.protosrc = chosen_server_ip
             arp_reply.protodst = arp_packet.protosrc
 
+            # Create ethernet
             ether = pkt.ethernet()
             ether.type = pkt.ethernet.ARP_TYPE
             ether.dst = packet.src
@@ -118,7 +121,8 @@ class LoadBalancer (object):
             ether.payload = arp_reply
 
             log.info(f"Sending ARP reply: {arp_reply}")
-
+            
+            # Send
             msg = of.ofp_packet_out()
             msg.data = ether.pack()
             msg.actions.append(of.ofp_action_output(port=event.port))
