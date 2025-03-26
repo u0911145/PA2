@@ -40,16 +40,12 @@ class LoadBalancer (object):
             self.handle_arp(packet, event)
             return
         
-        if packet.type == pkt.ethernet.IP_TYPE:
-            log.info("Handling IP packet")
-            self.handle_ip(packet, event)
-            return
-        
     def assign_client_server(self, client_key):
         global client_server_map
         global server_index
-        client_server_map[client_key] = servers[server_index]
-        server_index = (server_index + 1) % len(servers)
+        if client_key not in client_server_map:
+            client_server_map[client_key] = servers[server_index]
+            server_index = (server_index + 1) % len(servers)
         return client_server_map[client_key]
 
     def handle_arp(self, packet, event):
@@ -66,7 +62,38 @@ class LoadBalancer (object):
 
             if requested_ip == switch_ip:
                 log.info("Received ARP request for virtual IP")
-                chosen_server_mac = self.assign_client_server((client_ip, client_mac))[1]
+                chosen_server_ip, chosen_server_mac, chosen_port = self.assign_client_server((client_ip, client_mac))
+
+                # Install openflow rules
+                log.info(f"Forwarding IP packet from {client_ip} to {chosen_server_ip} via port {chosen_port}")
+            
+                # Client -> Server
+                msg = of.ofp_flow_mod()
+                msg.match.dl_type = pkt.ethernet.IP_TYPE
+                msg.match.nw_dst = switch_ip
+                msg.match.in_port = event.port
+                
+                # Actions
+                msg.actions.append(of.ofp_action_nw_addr.set_dst(chosen_server_ip))
+                msg.actions.append(of.ofp_action_dl_addr.set_dst(chosen_server_mac))
+                msg.actions.append(of.ofp_action_output(port=chosen_port))
+                
+                event.connection.send(msg)
+                
+                # Server -> Client
+                msg = of.ofp_flow_mod()
+                msg.match.dl_type = pkt.ethernet.IP_TYPE
+                msg.match.nw_src = chosen_server_ip
+                msg.match.in_port = chosen_port
+                
+                # Actions
+                msg.actions.append(of.ofp_action_nw_addr.set_src(switch_ip))
+                msg.actions.append(of.ofp_action_dl_addr.set_src(switch_mac))
+                msg.actions.append(of.ofp_action_output(port=event.port))
+                
+                event.connection.send(msg)
+
+                # Reset ip for ARP
                 chosen_server_ip = switch_ip
             else:
                 log.info(f"Received ARP request for client IP {requested_ip}")
@@ -96,44 +123,6 @@ class LoadBalancer (object):
             msg = of.ofp_packet_out()
             msg.data = ether.pack()
             msg.actions.append(of.ofp_action_output(port=event.port))
-            event.connection.send(msg)
-
-    def handle_ip(self, packet, event):
-        global client_server_map
-    
-        ip_packet = packet.payload
-        client_ip = ip_packet.srcip
-        client_mac = packet.src
-    
-        if packet.next.dstip == switch_ip:
-            chosen_server_ip, chosen_server_mac, chosen_port = self.assign_client_server((client_ip, client_mac))
-            
-            log.info(f"Forwarding IP packet from {packet.next.srcip} to {chosen_server_ip} via port {chosen_port}")
-            
-            # Client -> Server
-            msg = of.ofp_flow_mod()
-            msg.match.dl_type = pkt.ethernet.IP_TYPE
-            msg.match.nw_dst = switch_ip
-            msg.match.in_port = event.port
-            
-            # Actions
-            msg.actions.append(of.ofp_action_nw_addr.set_dst(chosen_server_ip))
-            msg.actions.append(of.ofp_action_dl_addr.set_dst(chosen_server_mac))
-            msg.actions.append(of.ofp_action_output(port=chosen_port))
-            
-            event.connection.send(msg)
-            
-            # Server -> Client
-            msg = of.ofp_flow_mod()
-            msg.match.dl_type = pkt.ethernet.IP_TYPE
-            msg.match.nw_src = chosen_server_ip
-            msg.match.in_port = chosen_port
-            
-            # Actions
-            msg.actions.append(of.ofp_action_nw_addr.set_src(switch_ip))
-            msg.actions.append(of.ofp_action_dl_addr.set_src(switch_mac))
-            msg.actions.append(of.ofp_action_output(port=event.port))
-            
             event.connection.send(msg)
 
 @poxutil.eval_args
