@@ -1,11 +1,9 @@
 # Import some POX stuff
-from pox.core import core                     # Main POX object
-import pox.openflow.libopenflow_01 as of      # OpenFlow 1.0 library
-import pox.lib.packet as pkt                  # Packet parsing/construction
-from pox.lib.addresses import EthAddr, IPAddr # Address types
-import pox.lib.util as poxutil                # Various util functions
-import pox.lib.revent as revent               # Event library
-import pox.lib.recoco as recoco               # Multitasking library
+from pox.core import core
+import pox.openflow.libopenflow_01 as of
+import pox.lib.packet as pkt
+from pox.lib.addresses import EthAddr, IPAddr
+import pox.lib.util as poxutil
 
 # Create a logger for this component
 log = core.getLogger()
@@ -25,11 +23,6 @@ class LoadBalancer (object):
 
     def _handle_ConnectionUp(self, event):
         log.info("Switch connected")
-
-        # Clear existing flows
-        msg = of.ofp_flow_mod()
-        msg.command = of.OFPFC_DELETE
-        event.connection.send(msg)
 
     def _handle_PacketIn(self, event):
         packet = event.parsed
