@@ -43,9 +43,8 @@ class LoadBalancer (object):
     def assign_client_server(self, client_key):
         global client_server_map
         global server_index
-        if client_key not in client_server_map:
-            client_server_map[client_key] = servers[server_index]
-            server_index = (server_index + 1) % len(servers)
+        client_server_map[client_key] = servers[server_index]
+        server_index = (server_index + 1) % len(servers)
         return client_server_map[client_key]
 
     def handle_arp(self, packet, event):
